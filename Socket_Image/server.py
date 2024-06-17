@@ -1,10 +1,10 @@
-import sys
-import socket
-import pickle
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout
 from PyQt5.QtGui import QPixmap, QPainter, QPen, QImage
 from PyQt5.QtCore import Qt, QByteArray, QThread, pyqtSignal
 import struct
+import sys
+import socket
+import pickle
 
 ip_address = "127.0.0.1"
 port = 12345
@@ -23,10 +23,13 @@ class ServerThread(QThread):
         while True:
             if current_size == 0:
                 pkg_size = struct.calcsize("l")
+                # head
                 buffer, _ = server_socket.recvfrom(pkg_size)
                 if buffer:
+                    # 传输文件包的个数
                     frame_size = struct.unpack("l", buffer)[0]
-            packet, _ = server_socket.recvfrom(4096)
+            # image
+            packet, _ = server_socket.recvfrom(2048 * 2)
             chunks.append(packet)
             current_size += 1
             if current_size == frame_size:
@@ -83,12 +86,19 @@ class ServerApp(QWidget):
                 painter.drawPoint(point[0], point[1])
             painter.end()
 
-            self.scale = self.calculate_scale_factors(pixmap.width(), pixmap.height(), 400, 400)
-            width = int(pixmap.width() * self.scale)
-            height = int(pixmap.height() * self.scale)
-            self.image_label.setPixmap(pixmap.scaled(width, height))
+            # 缩放图片
+            pixmap = self.scale_pixmap(pixmap)
+
+            self.image_label.setPixmap(pixmap)
         except Exception as e:
             print(f"Failed to update image: {e}")
+
+    def scale_pixmap(self, pixmap):
+        self.scale = self.calculate_scale_factors(pixmap.width(), pixmap.height(), 400, 400)
+        width = int(pixmap.width() * self.scale)
+        height = int(pixmap.height() * self.scale)
+        scale_pixmap = pixmap.scaled(width, height)
+        return scale_pixmap
 
     @staticmethod
     def calculate_scale_factors(raw_width, raw_height, target_width, target_height):

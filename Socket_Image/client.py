@@ -1,13 +1,44 @@
-import sys
-import socket
-import pickle
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QFileDialog, QVBoxLayout
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 import struct
+import sys
+import socket
+import pickle
+import queue
+import time
 
 ip_address = "127.0.0.1"
 port = 12345
+address = (ip_address, port)
+image_queue = queue.Queue()
+head_queue = queue.Queue()
+
+
+class ClientThread(QThread):
+    def __init__(self):
+        super(ClientThread, self).__init__()
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.image_path = None
+        self.draw_points = None
+        self.scale = None
+
+    def set(self, image_path, draw_points, scale):
+        self.image_path = image_path
+        self.draw_points = draw_points
+        self.scale = scale
+
+    def run(self):
+        while True:
+            time.sleep(0.01)
+            if self.image_path is None:
+                continue
+            if not head_queue.empty():
+                head = head_queue.get()
+                self.socket.sendto(head, address)
+            if not image_queue.empty():
+                image = image_queue.get()
+                self.socket.sendto(image, address)
 
 
 class ClientApp(QWidget):
@@ -17,9 +48,10 @@ class ClientApp(QWidget):
         self.upload_button = None
         self.send_button = None
         self.init_ui()
+        self.client_thread = ClientThread()
+        self.client_thread.start()
 
         self.draw_points = [(0, 0), (100, 100), (200, 200)]
-        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.image_path = None
         self.scale = None
 
@@ -53,11 +85,29 @@ class ClientApp(QWidget):
             if self.image_path != file_name:
                 self.image_label.clear()
             self.image_path = file_name
-            pixmap = QPixmap(file_name)
-            self.scale = self.calculate_scale_factors(pixmap.width(), pixmap.height(), 400, 400)
-            width = int(pixmap.width() * self.scale)
-            height = int(pixmap.height() * self.scale)
-            self.image_label.setPixmap(pixmap.scaled(width, height))
+
+            # 显示图片
+            self.show_image()
+
+    def send_to_server(self):
+        # 包装数据
+        self.pack_image()
+
+        # 线程传参
+        self.client_thread.set(self.image_path, self.draw_points, self.scale)
+
+    def show_image(self):
+        # 缩放显示图片
+        pixmap = QPixmap(self.image_path)
+        pixmap = self.scale_pixmap(pixmap)
+        self.image_label.setPixmap(pixmap)
+
+    def scale_pixmap(self, pixmap):
+        self.scale = self.calculate_scale_factors(pixmap.width(), pixmap.height(), 400, 400)
+        width = int(pixmap.width() * self.scale)
+        height = int(pixmap.height() * self.scale)
+        scale_pixmap = pixmap.scaled(width, height)
+        return scale_pixmap
 
     @staticmethod
     def calculate_scale_factors(raw_width, raw_height, target_width, target_height):
@@ -65,37 +115,12 @@ class ClientApp(QWidget):
         height_ratio = target_height / raw_height
         return min(width_ratio, height_ratio)
 
-    def send_to_server(self):
-        client_thread = ClientThread(self.image_path, self.draw_points, self.scale)
-        client_thread.send_head_signal.connect(self.send_msg)
-        client_thread.send_image_signal.connect(self.send_msg)
-        client_thread.start()
-        client_thread.wait()
-
-    def send_msg(self, msg):
-        self.client_socket.sendto(msg, (ip_address, port))
-
-
-class ClientThread(QThread):
-    send_image_signal = pyqtSignal(bytes)
-    send_head_signal = pyqtSignal(bytes)
-
-    def __init__(self, image_path, draw_points, scale):
-        super(ClientThread, self).__init__()
-        self.image_path = image_path
-        self.draw_points = draw_points
-        self.scale = scale
-
-    def run(self) -> None:
-        # 缩放坐标点的比例
-        draw_points = [(int(x * self.scale), int(y * self.scale)) for x, y in self.draw_points]
-        if not self.image_path:
-            print("No image selected.")
-            return
-
+    def pack_image(self):
         with open(self.image_path, 'rb') as f:
             image_data = f.read()
 
+        # 缩放坐标点的比例
+        draw_points = [(int(x * self.scale), int(y * self.scale)) for x, y in self.draw_points]
         data = {
             'image': image_data,
             'draw_points': draw_points
@@ -106,13 +131,10 @@ class ClientThread(QThread):
         chunk_size = 2048 * 2
         chunks = [serialized_data[i:i + chunk_size] for i in range(0, len(serialized_data), chunk_size)]
 
-        num_chunks = len(chunks)
-
-        pkg_head = struct.pack("l", num_chunks)
-        self.send_head_signal.emit(pkg_head)
+        head = struct.pack("l", len(chunks))
+        head_queue.put(head)
         for chunk in chunks:
-            print(chunk)
-            self.send_image_signal.emit(chunk)
+            image_queue.put(chunk)
 
 
 if __name__ == '__main__':
