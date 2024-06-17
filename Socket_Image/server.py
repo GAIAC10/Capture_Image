@@ -46,17 +46,22 @@ class ServerThread(QThread):
 class ServerApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Server')
         self.image_label = None
         self.init_ui()
+
         self.server_thread = ServerThread()
         self.server_thread.update_image_signal.connect(self.update_image)
         self.server_thread.start()
+        self.scale = None
 
     def init_ui(self):
+        self.setWindowTitle('Server')
+        self.resize(420, 420)
+
         layout = QVBoxLayout()
 
         self.image_label = QLabel(self)
+        self.image_label.resize(400, 400)
         self.image_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.image_label)
 
@@ -78,9 +83,18 @@ class ServerApp(QWidget):
                 painter.drawPoint(point[0], point[1])
             painter.end()
 
-            self.image_label.setPixmap(pixmap.scaled(400, 400, Qt.KeepAspectRatio))
+            self.scale = self.calculate_scale_factors(pixmap.width(), pixmap.height(), 400, 400)
+            width = int(pixmap.width() * self.scale)
+            height = int(pixmap.height() * self.scale)
+            self.image_label.setPixmap(pixmap.scaled(width, height))
         except Exception as e:
             print(f"Failed to update image: {e}")
+
+    @staticmethod
+    def calculate_scale_factors(raw_width, raw_height, target_width, target_height):
+        width_ratio = target_width / raw_width
+        height_ratio = target_height / raw_height
+        return min(width_ratio, height_ratio)
 
 
 if __name__ == '__main__':
